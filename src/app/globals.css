@@ -21,3 +21,8 @@ html, body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+[data-next-badge],
+nextjs-portal {
+  display: none !important;
+}

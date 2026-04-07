@@ -184,6 +184,24 @@ type Agent = {
   messages: Message[];
 };
 
+type TeamMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  senderName: string;
+  mentionTarget: string;
+  timestamp: Date;
+};
+
+type Team = {
+  id: string;
+  name: string;
+  goal: string;
+  rules: string[];
+  agentIds: string[];
+  messages: TeamMessage[];
+};
+
 const AGENT_COLORS = [
   "bg-blue-500",
   "bg-green-500",
@@ -192,6 +210,106 @@ const AGENT_COLORS = [
   "bg-pink-500",
   "bg-teal-500",
 ];
+
+function TeamSettingsModal({ team, agents, onSave, onClose }: {
+  team: Team;
+  agents: Agent[];
+  onSave: (goal: string, rules: string[], agentIds: string[]) => void;
+  onClose: () => void;
+}) {
+  const [goal, setGoal] = useState(team.goal);
+  const [rules, setRules] = useState(team.rules.length ? [...team.rules] : [""]);
+  const [agentIds, setAgentIds] = useState([...team.agentIds]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 w-[28rem] shadow-xl max-h-[80vh] overflow-y-auto">
+        <h3 className="text-lg font-bold text-gray-800 dark:text-gray-200 mb-4">
+          {team.name} - 설정
+        </h3>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm text-gray-600 dark:text-gray-400">핵심 목표</label>
+            <textarea
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              rows={2}
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            />
+          </div>
+          <div>
+            <label className="text-sm text-gray-600 dark:text-gray-400">규칙</label>
+            {rules.map((rule, i) => (
+              <div key={i} className="flex gap-1 mt-1">
+                <input
+                  type="text"
+                  value={rule}
+                  onChange={(e) => {
+                    const updated = [...rules];
+                    updated[i] = e.target.value;
+                    setRules(updated);
+                  }}
+                  placeholder={`규칙 ${i + 1}`}
+                  className="flex-1 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {rules.length > 1 && (
+                  <button
+                    onClick={() => setRules(rules.filter((_, j) => j !== i))}
+                    className="px-2 text-gray-400 hover:text-red-400 text-xs cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => setRules([...rules, ""])}
+              className="mt-1 text-xs text-blue-500 hover:text-blue-400 cursor-pointer"
+            >
+              + 규칙 추가
+            </button>
+          </div>
+          <div>
+            <label className="text-sm text-gray-600 dark:text-gray-400">멤버</label>
+            <div className="mt-1 space-y-1">
+              {agents.map((agent) => (
+                <label key={agent.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={agentIds.includes(agent.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) setAgentIds([...agentIds, agent.id]);
+                      else setAgentIds(agentIds.filter((id) => id !== agent.id));
+                    }}
+                    className="cursor-pointer"
+                  />
+                  <div className={`w-5 h-5 rounded-full ${agent.color} flex items-center justify-center text-[9px] font-bold text-white`}>
+                    {agent.name[0]}
+                  </div>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{agent.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+          >
+            취소
+          </button>
+          <button
+            onClick={() => onSave(goal, rules, agentIds)}
+            className="flex-1 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium cursor-pointer"
+          >
+            저장
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
   const [agents, setAgents] = useState<Agent[]>([
@@ -210,6 +328,16 @@ export default function Home() {
   const [tempApiKey, setTempApiKey] = useState("");
   const [viewMode, setViewMode] = useState<"chat" | "office">("chat");
   const [showFireConfirm, setShowFireConfirm] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"agents" | "teams">("agents");
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [showTeamSettings, setShowTeamSettings] = useState(false);
+  const [mentionTarget, setMentionTarget] = useState("@전체");
+  const [newTeamName, setNewTeamName] = useState("");
+  const [newTeamGoal, setNewTeamGoal] = useState("");
+  const [newTeamRules, setNewTeamRules] = useState<string[]>([""]);
+  const [newTeamAgentIds, setNewTeamAgentIds] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // ─── Office refs ──────────────────────────────────────────────
@@ -313,6 +441,143 @@ export default function Home() {
     setAgents((prev) => prev.filter((a) => a.id !== selectedAgent.id));
     setSelectedAgent(null);
     setShowFireConfirm(false);
+  };
+
+  // ─── Team functions ───────────────────────────────────────────
+
+  const createTeam = () => {
+    if (!newTeamName.trim()) return;
+    const team: Team = {
+      id: genId(),
+      name: newTeamName,
+      goal: newTeamGoal,
+      rules: newTeamRules.filter((r) => r.trim()),
+      agentIds: newTeamAgentIds,
+      messages: [],
+    };
+    setTeams((prev) => [...prev, team]);
+    setNewTeamName("");
+    setNewTeamGoal("");
+    setNewTeamRules([""]);
+    setNewTeamAgentIds([]);
+    setShowTeamModal(false);
+  };
+
+  const selectTeam = (team: Team) => {
+    setSelectedTeam(team);
+    setSelectedAgent(null);
+    setViewMode("chat");
+    setMentionTarget("@전체");
+  };
+
+  const selectAgentChat = (agent: Agent) => {
+    setSelectedAgent(agent);
+    setSelectedTeam(null);
+    setViewMode("chat");
+  };
+
+  const getTeamAgents = (team: Team) => agents.filter((a) => team.agentIds.includes(a.id));
+
+  const sendTeamMessage = async () => {
+    if (!input.trim() || !selectedTeam || isLoading) return;
+
+    const userMsg: TeamMessage = {
+      id: genId(),
+      role: "user",
+      content: input,
+      senderName: "나",
+      mentionTarget,
+      timestamp: new Date(),
+    };
+
+    const updatedMessages = [...selectedTeam.messages, userMsg];
+    const updatedTeam = { ...selectedTeam, messages: updatedMessages };
+    setTeams((prev) => prev.map((t) => (t.id === selectedTeam.id ? updatedTeam : t)));
+    setSelectedTeam(updatedTeam);
+
+    const sentInput = input;
+    setInput("");
+    setIsLoading(true);
+
+    const teamContext = {
+      name: selectedTeam.name,
+      goal: selectedTeam.goal,
+      rules: selectedTeam.rules,
+    };
+
+    // Build history from team messages for context
+    const history = updatedMessages.map((m) => ({
+      role: m.role,
+      content: m.role === "user"
+        ? `[${m.senderName} → ${m.mentionTarget}] ${m.content}`
+        : `[${m.senderName}] ${m.content}`,
+    }));
+
+    // Determine which agents should respond
+    const targetAgents = mentionTarget === "@전체"
+      ? getTeamAgents(selectedTeam)
+      : agents.filter((a) => `@${a.name}` === mentionTarget);
+
+    let currentMessages = updatedMessages;
+
+    try {
+      for (const agent of targetAgents) {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: sentInput,
+            agentName: agent.name,
+            agentRole: agent.role,
+            agentPersona: agent.persona,
+            ...(apiKey && { apiKey }),
+            history,
+            teamContext,
+          }),
+        });
+        const data = await res.json();
+
+        const agentMsg: TeamMessage = {
+          id: genId(),
+          role: "assistant",
+          content: data.content || data.error || "응답 실패",
+          senderName: agent.name,
+          mentionTarget: "",
+          timestamp: new Date(),
+        };
+
+        currentMessages = [...currentMessages, agentMsg];
+        const teamWithResponse = { ...selectedTeam, messages: currentMessages };
+        setTeams((prev) => prev.map((t) => (t.id === selectedTeam.id ? teamWithResponse : t)));
+        setSelectedTeam(teamWithResponse);
+
+        // Add agent response to history for next agent's context
+        history.push({ role: "assistant" as const, content: `[${agent.name}] ${agentMsg.content}` });
+      }
+    } catch {
+      const errMsg: TeamMessage = {
+        id: genId(),
+        role: "assistant",
+        content: "연결 실패. 다시 시도해주세요.",
+        senderName: "System",
+        mentionTarget: "",
+        timestamp: new Date(),
+      };
+      currentMessages = [...currentMessages, errMsg];
+      const teamWithErr = { ...selectedTeam, messages: currentMessages };
+      setTeams((prev) => prev.map((t) => (t.id === selectedTeam.id ? teamWithErr : t)));
+      setSelectedTeam(teamWithErr);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveTeamSettings = (goal: string, rules: string[], agentIds: string[]) => {
+    if (!selectedTeam) return;
+    const updated = { ...selectedTeam, goal, rules: rules.filter((r) => r.trim()), agentIds };
+    setTeams((prev) => prev.map((t) => (t.id === selectedTeam.id ? updated : t)));
+    setSelectedTeam(updated);
+    setShowTeamSettings(false);
   };
 
   // ─── Office: keep agentsRef in sync ────────────────────────────
@@ -531,8 +796,7 @@ export default function Home() {
       const cx = dp.x * TILE + DESK_W / 2;
       const cy = dp.y * TILE + DESK_H + 22;
       if (Math.sqrt((mx - cx) ** 2 + (my - cy) ** 2) < 35) {
-        setSelectedAgent(agents[i]);
-        setViewMode("chat");
+        selectAgentChat(agents[i]);
         return;
       }
     }
@@ -553,43 +817,103 @@ export default function Home() {
           <p className="text-xs text-gray-400 mt-2">Multi-Agent Personal Canvas</p>
         </div>
 
-        {/* Agents List */}
-        <div className="flex-1 p-4 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
-              Agents
-            </h2>
-            <button
-              onClick={() => setShowAgentModal(true)}
-              className="px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-700 text-xs cursor-pointer"
-            >
-              Hire
-            </button>
-          </div>
+        {/* Tabs */}
+        <div className="flex border-b border-gray-700">
+          <button
+            onClick={() => setSidebarTab("agents")}
+            className={`flex-1 py-2 text-xs font-semibold cursor-pointer ${
+              sidebarTab === "agents" ? "text-white border-b-2 border-blue-500" : "text-gray-400 hover:text-gray-300"
+            }`}
+          >
+            Agents
+          </button>
+          <button
+            onClick={() => setSidebarTab("teams")}
+            className={`flex-1 py-2 text-xs font-semibold cursor-pointer ${
+              sidebarTab === "teams" ? "text-white border-b-2 border-blue-500" : "text-gray-400 hover:text-gray-300"
+            }`}
+          >
+            Teams
+          </button>
+        </div>
 
-          <div className="space-y-1">
-            {agents.map((agent) => (
-              <div
-                key={agent.id}
-                onClick={() => setSelectedAgent(agent)}
-                className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer group ${
-                  selectedAgent?.id === agent.id
-                    ? "bg-gray-700"
-                    : "hover:bg-gray-800"
-                }`}
-              >
-                <div
-                  className={`w-8 h-8 rounded-full ${agent.color} flex items-center justify-center text-xs font-bold shrink-0`}
+        {/* Tab Content */}
+        <div className="flex-1 p-4 overflow-y-auto">
+          {sidebarTab === "agents" ? (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+                  Agents
+                </h2>
+                <button
+                  onClick={() => setShowAgentModal(true)}
+                  className="px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-700 text-xs cursor-pointer"
                 >
-                  {agent.name[0]}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{agent.name}</p>
-                  <p className="text-xs text-gray-400 truncate">{agent.role}</p>
-                </div>
+                  Hire
+                </button>
               </div>
-            ))}
-          </div>
+              <div className="space-y-1">
+                {agents.map((agent) => (
+                  <div
+                    key={agent.id}
+                    onClick={() => selectAgentChat(agent)}
+                    className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer group ${
+                      selectedAgent?.id === agent.id && !selectedTeam
+                        ? "bg-gray-700"
+                        : "hover:bg-gray-800"
+                    }`}
+                  >
+                    <div
+                      className={`w-8 h-8 rounded-full ${agent.color} flex items-center justify-center text-xs font-bold shrink-0`}
+                    >
+                      {agent.name[0]}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{agent.name}</p>
+                      <p className="text-xs text-gray-400 truncate">{agent.role}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+                  Teams
+                </h2>
+                <button
+                  onClick={() => setShowTeamModal(true)}
+                  className="px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-700 text-xs cursor-pointer"
+                >
+                  Create
+                </button>
+              </div>
+              <div className="space-y-1">
+                {teams.map((team) => (
+                  <div
+                    key={team.id}
+                    onClick={() => selectTeam(team)}
+                    className={`p-2 rounded-lg cursor-pointer ${
+                      selectedTeam?.id === team.id
+                        ? "bg-gray-700"
+                        : "hover:bg-gray-800"
+                    }`}
+                  >
+                    <p className="text-sm font-medium truncate">{team.name}</p>
+                    <p className="text-xs text-gray-400 truncate">
+                      {getTeamAgents(team).length} members
+                    </p>
+                  </div>
+                ))}
+                {teams.length === 0 && (
+                  <p className="text-xs text-gray-500 text-center mt-4">
+                    아직 팀이 없습니다
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Settings */}
@@ -627,7 +951,21 @@ export default function Home() {
           >
             ☰
           </button>
-          {selectedAgent ? (
+          {selectedTeam ? (
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                T
+              </div>
+              <div>
+                <h2 className="font-semibold text-gray-800 dark:text-gray-200 text-sm">
+                  {selectedTeam.name}
+                </h2>
+                <p className="text-xs text-gray-400">
+                  {getTeamAgents(selectedTeam).length} members
+                </p>
+              </div>
+            </div>
+          ) : selectedAgent ? (
             <div className="flex items-center gap-3">
               <div
                 className={`w-8 h-8 rounded-full ${selectedAgent.color} flex items-center justify-center text-xs font-bold text-white`}
@@ -645,7 +983,15 @@ export default function Home() {
             <h2 className="font-semibold text-gray-800 dark:text-gray-200">Chat</h2>
           )}
           <div className="ml-auto flex items-center gap-2">
-            {selectedAgent && viewMode === "chat" && agents.length > 1 && (
+            {selectedTeam && viewMode === "chat" && (
+              <button
+                onClick={() => setShowTeamSettings(true)}
+                className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded-lg cursor-pointer transition-colors"
+              >
+                Settings
+              </button>
+            )}
+            {selectedAgent && !selectedTeam && viewMode === "chat" && agents.length > 1 && (
               <button
                 onClick={() => setShowFireConfirm(true)}
                 className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-xs rounded-lg cursor-pointer transition-colors"
@@ -664,84 +1010,91 @@ export default function Home() {
 
         {/* Content Area */}
         {viewMode === "chat" ? (
-          <>
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {!selectedAgent && (
-                <div className="flex items-center justify-center h-full text-gray-400">
-                  <div className="text-center">
-                    <p className="text-lg mb-2">MAPC에 오신 것을 환영합니다</p>
-                    <p className="text-sm">
-                      좌측에서 에이전트를 선택하여 대화를 시작하세요
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {selectedAgent && currentMessages.length === 0 && (
-                <div className="flex items-center justify-center h-full text-gray-400">
-                  <div className="text-center">
-                    <p className="text-lg mb-2">{selectedAgent.name}</p>
-                    <p className="text-sm">메시지를 보내서 대화를 시작하세요</p>
-                  </div>
-                </div>
-              )}
-
-              {currentMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[70%] ${
-                      msg.role === "user"
-                        ? "bg-blue-600 text-white rounded-2xl rounded-br-sm"
-                        : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-sm"
-                    } px-4 py-3`}
-                  >
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                    <p
-                      className={`text-[10px] mt-1 ${
-                        msg.role === "user" ? "text-blue-200" : "text-gray-400"
-                      }`}
-                    >
-                      {msg.timestamp.toLocaleTimeString("ko-KR", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+          selectedTeam ? (
+            /* ─── Team Chat ─── */
+            <>
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {selectedTeam.messages.length === 0 && (
+                  <div className="flex items-center justify-center h-full text-gray-400">
+                    <div className="text-center">
+                      <p className="text-lg mb-2">{selectedTeam.name}</p>
+                      <p className="text-sm mb-1">팀 목표: {selectedTeam.goal || "(미설정)"}</p>
+                      <p className="text-xs">메시지를 보내서 팀 대화를 시작하세요</p>
                     </div>
                   </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
+                )}
 
-            {/* Input */}
-            {selectedAgent && (
+                {selectedTeam.messages.map((msg) => {
+                  const isUser = msg.role === "user";
+                  const senderAgent = !isUser ? agents.find((a) => a.name === msg.senderName) : null;
+                  return (
+                    <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[75%] ${
+                        isUser
+                          ? "bg-blue-600 text-white rounded-2xl rounded-br-sm"
+                          : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-sm"
+                      } px-4 py-3`}>
+                        {isUser && msg.mentionTarget && (
+                          <p className="text-[10px] text-blue-200 mb-1">
+                            → {msg.mentionTarget}
+                          </p>
+                        )}
+                        {!isUser && (
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className={`w-5 h-5 rounded-full ${senderAgent?.color || "bg-gray-500"} flex items-center justify-center text-[9px] font-bold text-white`}>
+                              {msg.senderName[0]}
+                            </div>
+                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                              {msg.senderName}
+                            </span>
+                          </div>
+                        )}
+                        <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                        <p className={`text-[10px] mt-1 ${isUser ? "text-blue-200" : "text-gray-400"}`}>
+                          {msg.timestamp.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Team Input */}
               <div className="p-4 border-t border-gray-200 dark:border-gray-800">
                 <div className="flex gap-2">
+                  <select
+                    value={mentionTarget}
+                    onChange={(e) => setMentionTarget(e.target.value)}
+                    className="px-2 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                  >
+                    <option value="@전체">@전체</option>
+                    {getTeamAgents(selectedTeam).map((a) => (
+                      <option key={a.id} value={`@${a.name}`}>@{a.name}</option>
+                    ))}
+                  </select>
                   <input
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+                    onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendTeamMessage()}
                     disabled={isLoading}
-                    placeholder={isLoading ? "응답 중..." : `${selectedAgent.name}에게 메시지...`}
+                    placeholder={isLoading ? "응답 중..." : `${selectedTeam.name}에 메시지...`}
                     className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-50"
                   />
                   <button
-                    onClick={sendMessage}
+                    onClick={sendTeamMessage}
                     disabled={isLoading}
                     className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-xl text-sm font-medium transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
@@ -749,8 +1102,96 @@ export default function Home() {
                   </button>
                 </div>
               </div>
-            )}
-          </>
+            </>
+          ) : (
+            /* ─── Agent 1:1 Chat ─── */
+            <>
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {!selectedAgent && (
+                  <div className="flex items-center justify-center h-full text-gray-400">
+                    <div className="text-center">
+                      <p className="text-lg mb-2">MAPC에 오신 것을 환영합니다</p>
+                      <p className="text-sm">
+                        좌측에서 에이전트 또는 팀을 선택하여 대화를 시작하세요
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {selectedAgent && currentMessages.length === 0 && (
+                  <div className="flex items-center justify-center h-full text-gray-400">
+                    <div className="text-center">
+                      <p className="text-lg mb-2">{selectedAgent.name}</p>
+                      <p className="text-sm">메시지를 보내서 대화를 시작하세요</p>
+                    </div>
+                  </div>
+                )}
+
+                {currentMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[70%] ${
+                        msg.role === "user"
+                          ? "bg-blue-600 text-white rounded-2xl rounded-br-sm"
+                          : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-sm"
+                      } px-4 py-3`}
+                    >
+                      <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                      <p
+                        className={`text-[10px] mt-1 ${
+                          msg.role === "user" ? "text-blue-200" : "text-gray-400"
+                        }`}
+                      >
+                        {msg.timestamp.toLocaleTimeString("ko-KR", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Input */}
+              {selectedAgent && (
+                <div className="p-4 border-t border-gray-200 dark:border-gray-800">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+                      disabled={isLoading}
+                      placeholder={isLoading ? "응답 중..." : `${selectedAgent.name}에게 메시지...`}
+                      className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-50"
+                    />
+                    <button
+                      onClick={sendMessage}
+                      disabled={isLoading}
+                      className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-xl text-sm font-medium transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {isLoading ? "..." : "전송"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )
         ) : (
           /* Office View */
           <div className="flex-1 flex items-center justify-center bg-gray-950 p-4 overflow-auto">
@@ -860,6 +1301,121 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Create Team Modal */}
+      {showTeamModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 w-[28rem] shadow-xl max-h-[80vh] overflow-y-auto">
+            <h3 className="text-lg font-bold text-gray-800 dark:text-gray-200 mb-4">
+              새 팀 생성
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm text-gray-600 dark:text-gray-400">팀 이름</label>
+                <input
+                  type="text"
+                  value={newTeamName}
+                  onChange={(e) => setNewTeamName(e.target.value)}
+                  placeholder="예: Marketing Team"
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 dark:text-gray-400">핵심 목표</label>
+                <textarea
+                  value={newTeamGoal}
+                  onChange={(e) => setNewTeamGoal(e.target.value)}
+                  placeholder="예: 2분기 마케팅 전략 수립 및 실행"
+                  rows={2}
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 dark:text-gray-400">규칙</label>
+                {newTeamRules.map((rule, i) => (
+                  <div key={i} className="flex gap-1 mt-1">
+                    <input
+                      type="text"
+                      value={rule}
+                      onChange={(e) => {
+                        const updated = [...newTeamRules];
+                        updated[i] = e.target.value;
+                        setNewTeamRules(updated);
+                      }}
+                      placeholder={`규칙 ${i + 1}`}
+                      className="flex-1 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {newTeamRules.length > 1 && (
+                      <button
+                        onClick={() => setNewTeamRules(newTeamRules.filter((_, j) => j !== i))}
+                        className="px-2 text-gray-400 hover:text-red-400 text-xs cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  onClick={() => setNewTeamRules([...newTeamRules, ""])}
+                  className="mt-1 text-xs text-blue-500 hover:text-blue-400 cursor-pointer"
+                >
+                  + 규칙 추가
+                </button>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 dark:text-gray-400">멤버 선택</label>
+                <div className="mt-1 space-y-1">
+                  {agents.map((agent) => (
+                    <label key={agent.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newTeamAgentIds.includes(agent.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setNewTeamAgentIds([...newTeamAgentIds, agent.id]);
+                          } else {
+                            setNewTeamAgentIds(newTeamAgentIds.filter((id) => id !== agent.id));
+                          }
+                        }}
+                        className="cursor-pointer"
+                      />
+                      <div className={`w-5 h-5 rounded-full ${agent.color} flex items-center justify-center text-[9px] font-bold text-white`}>
+                        {agent.name[0]}
+                      </div>
+                      <span className="text-sm text-gray-700 dark:text-gray-300">{agent.name}</span>
+                      <span className="text-xs text-gray-400">{agent.role}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setShowTeamModal(false)}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                onClick={createTeam}
+                className="flex-1 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium cursor-pointer"
+              >
+                생성
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Team Settings Modal */}
+      {showTeamSettings && selectedTeam && (
+        <TeamSettingsModal
+          team={selectedTeam}
+          agents={agents}
+          onSave={saveTeamSettings}
+          onClose={() => setShowTeamSettings(false)}
+        />
       )}
 
       {/* Fire Confirm Modal */}

@@ -7,16 +7,36 @@ type ChatMessage = {
   content: string;
 };
 
-function buildSystemPrompt(agentName: string, agentRole: string, agentPersona?: string): string {
-  let prompt = `You are an AI agent named "${agentName}" with the role of "${agentRole}".
-Respond in the same language as the user's message.
-Stay in character and provide helpful responses according to your role.`;
+type TeamContext = {
+  name: string;
+  goal: string;
+  rules: string[];
+};
+
+function buildSystemPrompt(
+  agentName: string,
+  agentRole: string,
+  agentPersona?: string,
+  teamContext?: TeamContext
+): string {
+  let prompt = `You are an AI agent named "${agentName}" with the role of "${agentRole}".`;
+
+  if (teamContext) {
+    prompt += `\n\nYou are a member of team "${teamContext.name}".`;
+    if (teamContext.goal) {
+      prompt += `\nTeam goal: ${teamContext.goal}`;
+    }
+    if (teamContext.rules.length > 0) {
+      prompt += `\nTeam rules you must follow:\n${teamContext.rules.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
+    }
+    prompt += `\nAlways keep the team goal and rules in mind when responding.`;
+  }
 
   if (agentPersona) {
     prompt += `\n\nYour persona and communication style: ${agentPersona}`;
-  } else {
-    prompt += `\nKeep responses concise and natural.`;
   }
+
+  prompt += `\n\nRespond in the same language as the user's message. Stay in character and provide helpful responses according to your role.`;
 
   return prompt;
 }
@@ -66,10 +86,9 @@ async function callWithCli(
 }
 
 export async function POST(req: NextRequest) {
-  const { message, agentName, agentRole, agentPersona, apiKey, history = [] } = await req.json();
-  const systemPrompt = buildSystemPrompt(agentName, agentRole, agentPersona);
+  const { message, agentName, agentRole, agentPersona, apiKey, history = [], teamContext } = await req.json();
+  const systemPrompt = buildSystemPrompt(agentName, agentRole, agentPersona, teamContext);
 
-  // Build full history including the new message
   const fullHistory: ChatMessage[] = [
     ...history.map((m: ChatMessage) => ({ role: m.role, content: m.content })),
     { role: "user" as const, content: message },

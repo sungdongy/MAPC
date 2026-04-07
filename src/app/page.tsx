@@ -27,6 +27,10 @@ const AGENT_HEX_COLORS: Record<string, string> = {
   "bg-teal-500": "#14b8a6",
 };
 
+function genId() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 const SKIN_TONES = ["#fcd5b0", "#f5c49a", "#e8b78a", "#d4a574", "#c49060", "#a87050"];
 const HAIR_COLORS = ["#2c1810", "#4a3020", "#8b6040", "#c4944a", "#e8c870", "#d44020"];
 
@@ -175,6 +179,7 @@ type Agent = {
   id: string;
   name: string;
   role: string;
+  persona: string;
   color: string;
   messages: Message[];
 };
@@ -190,7 +195,7 @@ const AGENT_COLORS = [
 
 export default function Home() {
   const [agents, setAgents] = useState<Agent[]>([
-    { id: "1", name: "Andy", role: "General Assistant", color: "bg-blue-500", messages: [] },
+    { id: "1", name: "Andy", role: "General Assistant", persona: "", color: "bg-blue-500", messages: [] },
   ]);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [input, setInput] = useState("");
@@ -198,11 +203,13 @@ export default function Home() {
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [newAgentName, setNewAgentName] = useState("");
   const [newAgentRole, setNewAgentRole] = useState("");
+  const [newAgentPersona, setNewAgentPersona] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [tempApiKey, setTempApiKey] = useState("");
   const [viewMode, setViewMode] = useState<"chat" | "office">("chat");
+  const [showFireConfirm, setShowFireConfirm] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // ─── Office refs ──────────────────────────────────────────────
@@ -221,7 +228,7 @@ export default function Home() {
     if (!input.trim() || !selectedAgent || isLoading) return;
 
     const userMsg: Message = {
-      id: crypto.randomUUID(),
+      id: genId(),
       role: "user",
       content: input,
       timestamp: new Date(),
@@ -245,13 +252,18 @@ export default function Home() {
           message: sentInput,
           agentName: selectedAgent.name,
           agentRole: selectedAgent.role,
+          agentPersona: selectedAgent.persona,
           ...(apiKey && { apiKey }),
+          history: selectedAgent.messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
         }),
       });
       const data = await res.json();
 
       const agentMsg: Message = {
-        id: crypto.randomUUID(),
+        id: genId(),
         role: "assistant",
         content: data.content || data.error || "응답을 받지 못했습니다.",
         timestamp: new Date(),
@@ -264,7 +276,7 @@ export default function Home() {
       setSelectedAgent((prev) => (prev ? { ...prev, messages: finalMessages } : null));
     } catch {
       const errMsg: Message = {
-        id: crypto.randomUUID(),
+        id: genId(),
         role: "assistant",
         content: "연결 실패. 다시 시도해주세요.",
         timestamp: new Date(),
@@ -282,22 +294,25 @@ export default function Home() {
   const addAgent = () => {
     if (!newAgentName.trim() || !newAgentRole.trim()) return;
     const newAgent: Agent = {
-      id: crypto.randomUUID(),
+      id: genId(),
       name: newAgentName,
       role: newAgentRole,
+      persona: newAgentPersona,
       color: AGENT_COLORS[agents.length % AGENT_COLORS.length],
       messages: [],
     };
     setAgents((prev) => [...prev, newAgent]);
     setNewAgentName("");
     setNewAgentRole("");
+    setNewAgentPersona("");
     setShowAgentModal(false);
   };
 
-  const removeAgent = (id: string) => {
-    if (agents.length <= 1) return;
-    setAgents((prev) => prev.filter((a) => a.id !== id));
-    if (selectedAgent?.id === id) setSelectedAgent(null);
+  const fireAgent = () => {
+    if (!selectedAgent || agents.length <= 1) return;
+    setAgents((prev) => prev.filter((a) => a.id !== selectedAgent.id));
+    setSelectedAgent(null);
+    setShowFireConfirm(false);
   };
 
   // ─── Office: keep agentsRef in sync ────────────────────────────
@@ -546,9 +561,9 @@ export default function Home() {
             </h2>
             <button
               onClick={() => setShowAgentModal(true)}
-              className="w-6 h-6 rounded-full bg-gray-700 hover:bg-gray-600 flex items-center justify-center text-sm cursor-pointer"
+              className="px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-700 text-xs cursor-pointer"
             >
-              +
+              Hire
             </button>
           </div>
 
@@ -572,17 +587,6 @@ export default function Home() {
                   <p className="text-sm font-medium truncate">{agent.name}</p>
                   <p className="text-xs text-gray-400 truncate">{agent.role}</p>
                 </div>
-                {agents.length > 1 && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeAgent(agent.id);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs cursor-pointer"
-                  >
-                    ✕
-                  </button>
-                )}
               </div>
             ))}
           </div>
@@ -640,10 +644,15 @@ export default function Home() {
           ) : (
             <h2 className="font-semibold text-gray-800 dark:text-gray-200">Chat</h2>
           )}
-          <div className="ml-auto flex items-center gap-3">
-            <span className="text-xs text-gray-400">
-              {agents.length} agent{agents.length > 1 ? "s" : ""}
-            </span>
+          <div className="ml-auto flex items-center gap-2">
+            {selectedAgent && viewMode === "chat" && agents.length > 1 && (
+              <button
+                onClick={() => setShowFireConfirm(true)}
+                className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-xs rounded-lg cursor-pointer transition-colors"
+              >
+                Fire
+              </button>
+            )}
             <button
               onClick={() => setViewMode(viewMode === "chat" ? "office" : "chat")}
               className="px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm rounded-lg cursor-pointer transition-colors"
@@ -785,6 +794,16 @@ export default function Home() {
                   className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+              <div>
+                <label className="text-sm text-gray-600 dark:text-gray-400">페르소나 (선택)</label>
+                <textarea
+                  value={newAgentPersona}
+                  onChange={(e) => setNewAgentPersona(e.target.value)}
+                  placeholder="예: 친근하고 유머러스한 톤으로 대화하며, 복잡한 내용을 쉽게 설명해주는 성격"
+                  rows={3}
+                  className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
             </div>
             <div className="flex gap-2 mt-5">
               <button
@@ -837,6 +856,37 @@ export default function Home() {
                 className="flex-1 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium cursor-pointer"
               >
                 저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fire Confirm Modal */}
+      {showFireConfirm && selectedAgent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 w-96 shadow-xl">
+            <h3 className="text-lg font-bold text-red-500 mb-3">
+              에이전트 해고
+            </h3>
+            <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">
+              <span className="font-semibold">{selectedAgent.name}</span>을(를) 해고하시겠습니까?
+            </p>
+            <p className="text-xs text-red-400 bg-red-500/10 rounded-lg p-3 mb-4">
+              해고 시 해당 에이전트와 나눈 모든 대화 기록이 영구적으로 삭제되며 복구할 수 없습니다.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowFireConfirm(false)}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                onClick={fireAgent}
+                className="flex-1 px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium cursor-pointer"
+              >
+                해고
               </button>
             </div>
           </div>

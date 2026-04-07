@@ -2,16 +2,28 @@ import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "child_process";
 import Anthropic from "@anthropic-ai/sdk";
 
-function buildSystemPrompt(agentName: string, agentRole: string): string {
-  return `You are an AI agent named "${agentName}" with the role of "${agentRole}".
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+function buildSystemPrompt(agentName: string, agentRole: string, agentPersona?: string): string {
+  let prompt = `You are an AI agent named "${agentName}" with the role of "${agentRole}".
 Respond in the same language as the user's message.
-Stay in character and provide helpful responses according to your role.
-Keep responses concise and natural.`;
+Stay in character and provide helpful responses according to your role.`;
+
+  if (agentPersona) {
+    prompt += `\n\nYour persona and communication style: ${agentPersona}`;
+  } else {
+    prompt += `\nKeep responses concise and natural.`;
+  }
+
+  return prompt;
 }
 
 async function callWithApiKey(
   apiKey: string,
-  message: string,
+  history: ChatMessage[],
   systemPrompt: string
 ): Promise<string> {
   const client = new Anthropic({ apiKey });
@@ -19,7 +31,7 @@ async function callWithApiKey(
     model: "claude-sonnet-4-20250514",
     max_tokens: 1024,
     system: systemPrompt,
-    messages: [{ role: "user", content: message }],
+    messages: history.map((m) => ({ role: m.role, content: m.content })),
   });
 
   const textBlock = response.content.find((b) => b.type === "text");
@@ -27,10 +39,14 @@ async function callWithApiKey(
 }
 
 async function callWithCli(
-  message: string,
+  history: ChatMessage[],
   systemPrompt: string
 ): Promise<string> {
-  const fullPrompt = `${systemPrompt}\n\nUser: ${message}`;
+  const conversation = history
+    .map((m) => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`))
+    .join("\n\n");
+  const fullPrompt = `${systemPrompt}\n\n${conversation}\n\nAssistant:`;
+
   return new Promise<string>((resolve, reject) => {
     const proc = execFile(
       "claude",
@@ -50,19 +66,25 @@ async function callWithCli(
 }
 
 export async function POST(req: NextRequest) {
-  const { message, agentName, agentRole, apiKey } = await req.json();
-  const systemPrompt = buildSystemPrompt(agentName, agentRole);
+  const { message, agentName, agentRole, agentPersona, apiKey, history = [] } = await req.json();
+  const systemPrompt = buildSystemPrompt(agentName, agentRole, agentPersona);
+
+  // Build full history including the new message
+  const fullHistory: ChatMessage[] = [
+    ...history.map((m: ChatMessage) => ({ role: m.role, content: m.content })),
+    { role: "user" as const, content: message },
+  ];
 
   try {
     const response = apiKey
-      ? await callWithApiKey(apiKey, message, systemPrompt)
-      : await callWithCli(message, systemPrompt);
+      ? await callWithApiKey(apiKey, fullHistory, systemPrompt)
+      : await callWithCli(fullHistory, systemPrompt);
 
     return NextResponse.json({ content: response });
   } catch (error) {
     console.error("Agent error:", error);
     return NextResponse.json(
-      { error: "에이전트 응답에 실패했습니다. API Key를 확인해주세요." },
+      { error: "에이전트 응답에 실패했습니다." },
       { status: 500 }
     );
   }

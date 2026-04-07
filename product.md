@@ -5,8 +5,8 @@
 **MAPC** (Multi-Agent Personal Canvas) = 누구나 손쉽게 멀티 에이전트 서비스 및 팀을 만들고 활용할 수 있는 플랫폼
 
 - 채팅 기반 UI + 2D 가상 오피스 뷰를 겸비한 멀티 에이전트 플랫폼
-- 비개발자도 쉽게 에이전트를 생성(Hire)하고 관리할 수 있는 것이 목표
-- 에이전트별 독립된 대화 세션 및 기록 유지
+- 비개발자도 쉽게 에이전트를 생성(Hire)하고 팀을 구성할 수 있는 것이 목표
+- 에이전트별 독립된 대화 세션 및 팀 단위 협업 채팅 지원
 - 참고 서비스: [NanoClaw](https://github.com/qwibitai/nanoclaw) (개발자 중심 경량 AI 에이전트 프레임워크)
 - GitHub: [sungdongy/MAPC](https://github.com/sungdongy/MAPC)
 
@@ -149,13 +149,85 @@
 
 ---
 
+### Phase 7: Team 기능 구현 (2026-04-07)
+
+**목표:** 에이전트를 팀으로 묶어 공동 목표/규칙 기반의 슬랙 스타일 팀 채팅 제공
+
+**구현 내용:**
+
+1. **Team 데이터 모델**
+   - `Team` 타입: id, name, goal, rules[], agentIds[], messages[]
+   - `TeamMessage` 타입: id, role, content, senderName, mentionTarget, timestamp
+   - 에이전트는 팀에 속하지 않을 수도 있고, 여러 팀에 속할 수도 있음
+
+2. **사이드바 탭 UI**
+   - 상단에 **[Agents] / [Teams]** 탭 전환 버튼
+   - Agents 탭: 기존 에이전트 리스트 + Hire 버튼 (1:1 채팅)
+   - Teams 탭: 팀 리스트 + Create 버튼. 팀 클릭 → Team chat 모드
+   - 에이전트 선택 시 팀 선택 해제, 팀 선택 시 에이전트 선택 해제 (상호 배타)
+
+3. **Team 생성 모달**
+   - 팀 이름 (필수)
+   - 핵심 목표 (textarea)
+   - 규칙 (동적 추가/삭제 가능한 리스트, + 규칙 추가 / ✕ 삭제)
+   - 멤버 선택 (기존 에이전트 중 체크박스로 선택, 아바타 + 이름 + 역할 표시)
+
+4. **Team Chat (슬랙 스타일)**
+   - **멘션 대상 드롭다운** (입력란 왼쪽): @전체 / @개별 에이전트 선택
+   - **@전체**: 팀 내 모든 에이전트가 **순서대로** 각각 응답 (이전 에이전트의 응답을 다음 에이전트가 볼 수 있음)
+   - **@특정 에이전트**: 해당 에이전트만 응답
+   - 각 메시지에 **발신자 아바타/이름** + **멘션 대상** 표시
+   - 사용자 메시지: "→ @Andy" 형태로 수신 대상 표시
+   - 에이전트 응답: 아바타 + 이름 표시
+   - 대화 기록이 모든 에이전트에게 공유됨 (팀 전체 맥락 유지)
+
+5. **Team Settings 모달** (헤더의 "Settings" 버튼)
+   - 핵심 목표 수정
+   - 규칙 추가/수정/삭제
+   - 멤버 추가/제거
+   - 변경 즉시 반영 (다음 메시지부터 적용)
+
+6. **헤더 변경**
+   - Team 선택 시: 팀 아바타(T) + 팀 이름 + 멤버 수 + "Settings" 버튼
+   - Agent 선택 시: 기존과 동일 (에이전트 아바타 + 이름 + Fire 버튼)
+
+7. **시스템 프롬프트 확장**
+   - `buildSystemPrompt`에 `teamContext` 파라미터 추가 (optional)
+   - Team chat 시: 에이전트 개인 역할/페르소나 + 팀 이름/목표/규칙이 합쳐져서 전달
+   - 프롬프트 구조:
+     ```
+     You are an AI agent named "Andy" with the role of "Data Analyst".
+     
+     You are a member of team "Marketing Team".
+     Team goal: 2분기 마케팅 전략 수립
+     Team rules you must follow:
+     1. 데이터 기반으로 의견을 제시할 것
+     2. 한국어로 답변할 것
+     Always keep the team goal and rules in mind when responding.
+     
+     Your persona: 친근하고 유머러스한 톤
+     ```
+   - 1:1 개인 채팅은 기존과 동일하게 동작 (teamContext 없음)
+
+---
+
+### Phase 8: 프로젝트 폴더 구조 정리 (2026-04-07)
+
+**변경 내용:**
+- `ACAW/acaw-chat/` → `MAPC/mapc-agent/` 폴더명 변경
+- Git 히스토리 및 코드는 그대로 유지
+
+---
+
 ## Current Architecture
 
 ```
 [Browser]
     ↓
 [Next.js App (port 8053)]
-    ├── Chat 모드: 에이전트별 독립 채팅 UI
+    ├── Chat 모드
+    │   ├── Agent 1:1 채팅 (에이전트별 독립 세션)
+    │   └── Team 채팅 (슬랙 스타일, 멘션 기반)
     ├── Office 모드: 2D Canvas 오피스 뷰
     └── /api/chat (API Route)
             ↓
@@ -168,24 +240,23 @@
         │                       │
         └───────────┬───────────┘
                     ↓
+        [시스템 프롬프트 구성]
+        ├── 에이전트 역할 + 페르소나
+        └── (Team chat 시) 팀 목표 + 규칙
+                    ↓
               [Claude 응답]
 ```
 
-**에이전트 데이터 흐름:**
+**데이터 흐름:**
 ```
-Agent 생성 (Hire)
-  → 이름 + 역할 + 페르소나 정의
-  → 시스템 프롬프트 자동 생성
-  → 독립 대화 세션 시작
+Agent 생성 (Hire) → 이름 + 역할 + 페르소나 → 독립 대화 세션
+Agent 삭제 (Fire) → 경고 확인 → 에이전트 + 기록 영구 삭제
 
-메시지 전송
-  → 해당 에이전트의 전체 대화 기록(history) + 새 메시지
-  → API Route에서 시스템 프롬프트 + history로 Claude 호출
-  → 응답을 해당 에이전트의 기록에 추가
+Team 생성 (Create) → 이름 + 목표 + 규칙 + 멤버 선택
+Team 채팅 → @멘션 대상 선택 → 대상 에이전트에게 팀 컨텍스트 + 히스토리 전달 → 응답
+Team 설정 (Settings) → 목표/규칙/멤버 수정 → 다음 메시지부터 반영
 
-Agent 삭제 (Fire)
-  → 경고 모달 확인
-  → 에이전트 + 대화 기록 영구 삭제
+1:1 채팅 → 에이전트 history + 새 메시지 → Claude 호출 → 응답 추가
 ```
 
 ---
@@ -193,19 +264,20 @@ Agent 삭제 (Fire)
 ## File Structure
 
 ```
-acaw-chat/
-├── src/app/
-│   ├── page.tsx          # 메인 페이지 (Chat + Office 뷰, 에이전트 관리)
-│   ├── layout.tsx        # 레이아웃 (메타데이터, 폰트)
-│   ├── globals.css       # 글로벌 스타일
-│   └── api/chat/
-│       └── route.ts      # Claude 연동 API (CLI/SDK 이중 모드)
-├── public/
-│   └── logo.svg          # MAPC 로고 (SVG)
-├── next.config.ts        # Next.js 설정 (allowedDevOrigins)
-├── product.md            # 이 파일 (개발 로그)
-├── package.json
-└── tsconfig.json
+MAPC/                               ← 프로젝트 루트
+└── mapc-agent/                     ← Next.js 앱
+    ├── src/app/
+    │   ├── page.tsx                # 메인 페이지 (Chat/Office 뷰, Agent/Team 관리)
+    │   ├── layout.tsx              # 레이아웃 (메타데이터, 폰트)
+    │   ├── globals.css             # 글로벌 스타일
+    │   └── api/chat/
+    │       └── route.ts            # Claude 연동 API (CLI/SDK 이중 모드, teamContext 지원)
+    ├── public/
+    │   └── logo.svg                # MAPC 로고 (SVG)
+    ├── next.config.ts              # Next.js 설정 (allowedDevOrigins)
+    ├── product.md                  # 이 파일 (개발 로그)
+    ├── package.json
+    └── tsconfig.json
 ```
 
 ---
@@ -214,13 +286,14 @@ acaw-chat/
 
 - [ ] 에이전트 전체가 공유하는 지식 md 파일 시스템
 - [ ] 대화 기록 영구 저장 (DB 연동)
-- [ ] 팀 구성 기능 (여러 에이전트를 하나의 팀으로 묶기)
-- [ ] 팀 내 에이전트 간 협업 (자동 라우팅)
+- [ ] 팀 내 에이전트 간 자동 협업 (라우팅)
 - [ ] 업무 보고서 자동 생성
 - [ ] 사용자 인증 (로그인/회원가입)
 - [ ] 도메인 연결 및 프로덕션 배포
 - [ ] 멀티채널 지원 (Slack, Discord 등)
 - [ ] 에이전트 성능 파라미터 (temperature, 모델 선택)
+- [ ] 팀 삭제 기능
+- [ ] 에이전트 프로필 수정 기능
 
 ---
 
@@ -233,3 +306,5 @@ acaw-chat/
 | 게임형 UI | Canvas 전용 페이지 대신 Chat/Office 토글 방식으로 결정 |
 | 대화 기록 | 현재 클라이언트 메모리에만 저장 (새로고침 시 소실) |
 | 에이전트 수 | Office 뷰 기준 최대 8개 (DESK_POSITIONS 배열) |
+| Team @전체 | 에이전트가 순서대로 응답, 이전 응답이 다음 에이전트 컨텍스트에 포함됨 |
+| 폴더 구조 | `ACAW/acaw-chat` → `MAPC/mapc-agent`로 변경 (2026-04-07) |

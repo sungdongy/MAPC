@@ -812,9 +812,8 @@ export default function Home() {
           sidebarOpen ? "w-72" : "w-0"
         } transition-all duration-300 bg-gray-900 text-white flex flex-col overflow-hidden`}
       >
-        <div className="p-4 border-b border-gray-700">
-          <Image src="/logo.svg" alt="MAPC" width={120} height={36} priority />
-          <p className="text-xs text-gray-400 mt-2">Multi-Agent Personal Canvas</p>
+        <div className="px-4 py-3 border-b border-gray-700 bg-white">
+          <Image src="/mapc.svg" alt="MAPC" width={160} height={48} priority className="object-contain" />
         </div>
 
         {/* Tabs */}

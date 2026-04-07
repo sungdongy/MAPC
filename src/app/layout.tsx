@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ACAW",
-  description: "Multi-Agent Team Platform",
+  title: "MAPC",
+  description: "Multi-Agent Personal Canvas",
 };
 
 export default function RootLayout({

@@ -219,6 +219,58 @@
 
 ---
 
+### Phase 9: Actionable Agent - 도구 실행 기능 (2026-04-08)
+
+**목표:** 에이전트가 채팅뿐 아니라 실제 액션(파일 읽기/쓰기, 명령 실행, 웹 검색)을 수행할 수 있도록 업그레이드
+
+**리서치 결과:**
+- Anthropic SDK의 **Tool Use (Function Calling)** 기능을 활용 (이미 설치된 `@anthropic-ai/sdk`)
+- NanoClaw, Claude Agent SDK, MCP는 향후 확장 시 도입 예정
+- 현재는 별도 라이브러리 없이 SDK의 도구 정의 + 실행 루프로 구현
+
+**구현 내용:**
+
+1. **도구 5종 구현** (`/api/chat/route.ts`)
+   - `list_files` - 디렉토리 파일 목록 조회 (이름, 타입, 크기)
+   - `read_file` - 파일 내용 읽기 (최대 줄 수 제한 가능)
+   - `write_file` - 파일 생성/수정
+   - `run_command` - 셸 명령 실행 (위험 명령 블랙리스트 적용)
+   - `web_search` - 웹 검색 (Claude Code CLI 경유)
+
+2. **Tool Use 루프** (API Key 모드)
+   - Claude가 `tool_use` 블록으로 도구 호출 요청
+   - 서버에서 도구 실행 후 `tool_result`로 반환
+   - Claude가 결과를 보고 추가 도구 호출 또는 최종 응답 생성
+   - 최대 반복 횟수 10회 제한
+
+3. **보안 조치**
+   - 위험 명령 블랙리스트: `rm -rf /`, `shutdown`, `mkfs`, `dd` 등 차단
+   - 명령 실행 타임아웃: 30초
+   - 파일 읽기 줄 수 제한: 기본 200줄
+
+4. **에이전트별 도구 권한**
+   - Agent 타입에 `allowedTools: string[]` 필드 추가
+   - 에이전트 생성(Hire) 시 체크박스로 허용 도구 선택
+   - 카테고리별 그룹: 파일(목록/읽기/쓰기), 시스템(명령 실행), 웹(검색)
+   - 도구가 없는 에이전트는 기존처럼 채팅만 가능
+
+5. **채팅 UI 도구 호출 표시**
+   - 에이전트 응답에 도구 호출이 포함된 경우 **접을 수 있는 블록**으로 표시
+   - 🔧 도구명 클릭 → 입력 파라미터 + 실행 결과 확인 가능
+   - `<details>/<summary>` HTML 태그 활용
+
+6. **API 응답 확장**
+   - 기존: `{ content: string }`
+   - 변경: `{ content: string, toolCalls: ToolCall[] }`
+   - ToolCall: `{ name, input, result }`
+
+**기술 결정:**
+- NanoClaw/Agent SDK 대신 Anthropic SDK Tool Use를 직접 사용
+  - 이유: 이미 설치된 SDK로 충분, 별도 의존성 불필요, 빠른 구현
+  - 향후 보안 강화 시 컨테이너 격리(NanoClaw 패턴) 도입 예정
+
+---
+
 ## Current Architecture
 
 ```
@@ -236,15 +288,23 @@
   [API Key 있음]          [API Key 없음]
         │                       │
   Anthropic SDK          Claude Code CLI
-  (messages 배열)        (텍스트 조합)
+  (Tool Use 루프)        (--allowedTools)
         │                       │
         └───────────┬───────────┘
                     ↓
         [시스템 프롬프트 구성]
         ├── 에이전트 역할 + 페르소나
-        └── (Team chat 시) 팀 목표 + 규칙
+        ├── (Team chat 시) 팀 목표 + 규칙
+        └── 허용 도구 목록 (allowedTools)
                     ↓
               [Claude 응답]
+                    ↓ (tool_use 시)
+              [도구 실행 루프]
+        ┌─────────┼─────────┐─────────┐
+    list_files  read_file  run_cmd  web_search
+        write_file
+                    ↓
+              [tool_result → Claude → 최종 응답]
 ```
 
 **데이터 흐름:**
@@ -284,6 +344,9 @@ MAPC/                               ← 프로젝트 루트
 
 ## Backlog / Future Plans
 
+- [ ] MCP 서버 연동 (PostgreSQL, GitHub, Slack)
+- [ ] 컨테이너 격리 실행 (NanoClaw 패턴)
+- [ ] 도구 실행 사용자 승인 워크플로
 - [ ] 에이전트 전체가 공유하는 지식 md 파일 시스템
 - [ ] 대화 기록 영구 저장 (DB 연동)
 - [ ] 팀 내 에이전트 간 자동 협업 (라우팅)
@@ -294,6 +357,7 @@ MAPC/                               ← 프로젝트 루트
 - [ ] 에이전트 성능 파라미터 (temperature, 모델 선택)
 - [ ] 팀 삭제 기능
 - [ ] 에이전트 프로필 수정 기능
+- [ ] 도구 실행 히스토리/감사 로그
 
 ---
 
@@ -308,3 +372,6 @@ MAPC/                               ← 프로젝트 루트
 | 에이전트 수 | Office 뷰 기준 최대 8개 (DESK_POSITIONS 배열) |
 | Team @전체 | 에이전트가 순서대로 응답, 이전 응답이 다음 에이전트 컨텍스트에 포함됨 |
 | 폴더 구조 | `ACAW/acaw-chat` → `MAPC/mapc-agent`로 변경 (2026-04-07) |
+| Tool Use | Anthropic SDK 직접 사용, NanoClaw/Agent SDK는 향후 도입 |
+| 도구 보안 | 블랙리스트 기반 차단, 향후 컨테이너 격리 필요 |
+| 도구 실행 환경 | Next.js 서버 프로세스에서 직접 실행 (격리 없음) |

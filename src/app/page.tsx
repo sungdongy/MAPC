@@ -168,12 +168,27 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, size: nu
   ctx.beginPath(); ctx.arc(x + size * 0.12, y - size * 0.25, size * 0.25, 0, Math.PI * 2); ctx.fill();
 }
 
+type ToolCall = {
+  name: string;
+  input: string;
+  result: string;
+};
+
 type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  toolCalls?: ToolCall[];
   timestamp: Date;
 };
+
+const TOOL_OPTIONS = [
+  { id: "list_files", label: "파일 목록", category: "파일" },
+  { id: "read_file", label: "파일 읽기", category: "파일" },
+  { id: "write_file", label: "파일 쓰기", category: "파일" },
+  { id: "run_command", label: "명령 실행", category: "시스템" },
+  { id: "web_search", label: "웹 검색", category: "웹" },
+];
 
 type Agent = {
   id: string;
@@ -181,6 +196,7 @@ type Agent = {
   role: string;
   persona: string;
   color: string;
+  allowedTools: string[];
   messages: Message[];
 };
 
@@ -313,7 +329,7 @@ function TeamSettingsModal({ team, agents, onSave, onClose }: {
 
 export default function Home() {
   const [agents, setAgents] = useState<Agent[]>([
-    { id: "1", name: "Andy", role: "General Assistant", persona: "", color: "bg-blue-500", messages: [] },
+    { id: "1", name: "Andy", role: "General Assistant", persona: "", color: "bg-blue-500", allowedTools: [], messages: [] },
   ]);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [input, setInput] = useState("");
@@ -322,6 +338,7 @@ export default function Home() {
   const [newAgentName, setNewAgentName] = useState("");
   const [newAgentRole, setNewAgentRole] = useState("");
   const [newAgentPersona, setNewAgentPersona] = useState("");
+  const [newAgentTools, setNewAgentTools] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
@@ -382,6 +399,7 @@ export default function Home() {
           agentRole: selectedAgent.role,
           agentPersona: selectedAgent.persona,
           ...(apiKey && { apiKey }),
+          allowedTools: selectedAgent.allowedTools,
           history: selectedAgent.messages.map((m) => ({
             role: m.role,
             content: m.content,
@@ -394,6 +412,7 @@ export default function Home() {
         id: genId(),
         role: "assistant",
         content: data.content || data.error || "응답을 받지 못했습니다.",
+        toolCalls: data.toolCalls?.length > 0 ? data.toolCalls : undefined,
         timestamp: new Date(),
       };
 
@@ -427,12 +446,14 @@ export default function Home() {
       role: newAgentRole,
       persona: newAgentPersona,
       color: AGENT_COLORS[agents.length % AGENT_COLORS.length],
+      allowedTools: newAgentTools,
       messages: [],
     };
     setAgents((prev) => [...prev, newAgent]);
     setNewAgentName("");
     setNewAgentRole("");
     setNewAgentPersona("");
+    setNewAgentTools([]);
     setShowAgentModal(false);
   };
 
@@ -1138,6 +1159,27 @@ export default function Home() {
                           : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-sm"
                       } px-4 py-3`}
                     >
+                      {msg.toolCalls && msg.toolCalls.length > 0 && (
+                        <div className="mb-2 space-y-1">
+                          {msg.toolCalls.map((tc, idx) => (
+                            <details key={idx} className="bg-gray-200 dark:bg-gray-700 rounded-lg text-xs">
+                              <summary className="px-2 py-1 cursor-pointer font-medium text-gray-600 dark:text-gray-300">
+                                🔧 {tc.name}
+                              </summary>
+                              <div className="px-2 pb-2 space-y-1">
+                                <div>
+                                  <span className="text-gray-500">입력:</span>
+                                  <pre className="mt-0.5 p-1 bg-gray-300 dark:bg-gray-600 rounded text-[10px] overflow-x-auto whitespace-pre-wrap">{tc.input}</pre>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">결과:</span>
+                                  <pre className="mt-0.5 p-1 bg-gray-300 dark:bg-gray-600 rounded text-[10px] overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto">{tc.result}</pre>
+                                </div>
+                              </div>
+                            </details>
+                          ))}
+                        </div>
+                      )}
                       <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                       <p
                         className={`text-[10px] mt-1 ${
@@ -1243,6 +1285,26 @@ export default function Home() {
                   rows={3}
                   className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 dark:text-gray-400">도구 권한 (선택)</label>
+                <div className="mt-1 space-y-1">
+                  {TOOL_OPTIONS.map((tool) => (
+                    <label key={tool.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newAgentTools.includes(tool.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) setNewAgentTools([...newAgentTools, tool.id]);
+                          else setNewAgentTools(newAgentTools.filter((t) => t !== tool.id));
+                        }}
+                        className="cursor-pointer"
+                      />
+                      <span className="text-sm text-gray-700 dark:text-gray-300">{tool.label}</span>
+                      <span className="text-xs text-gray-400">({tool.category})</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="flex gap-2 mt-5">

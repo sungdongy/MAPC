@@ -227,15 +227,17 @@ const AGENT_COLORS = [
   "bg-teal-500",
 ];
 
-function TeamSettingsModal({ team, agents, onSave, onClose }: {
+function TeamSettingsModal({ team, agents, onSave, onClose, onDissolve }: {
   team: Team;
   agents: Agent[];
   onSave: (goal: string, rules: string[], agentIds: string[]) => void;
   onClose: () => void;
+  onDissolve: () => void;
 }) {
   const [goal, setGoal] = useState(team.goal);
   const [rules, setRules] = useState(team.rules.length ? [...team.rules] : [""]);
   const [agentIds, setAgentIds] = useState([...team.agentIds]);
+  const [showDissolveConfirm, setShowDissolveConfirm] = useState(false);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -321,6 +323,38 @@ function TeamSettingsModal({ team, agents, onSave, onClose }: {
           >
             저장
           </button>
+        </div>
+
+        {/* Dissolve */}
+        <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+          {!showDissolveConfirm ? (
+            <button
+              onClick={() => setShowDissolveConfirm(true)}
+              className="w-full px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium cursor-pointer"
+            >
+              Dissolve
+            </button>
+          ) : (
+            <div>
+              <p className="text-xs text-red-400 bg-red-500/10 rounded-lg p-3 mb-3">
+                팀을 해체하면 모든 팀 대화 기록이 영구적으로 삭제됩니다. 팀에 속한 에이전트는 삭제되지 않습니다.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDissolveConfirm(false)}
+                  className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 text-sm cursor-pointer"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={onDissolve}
+                  className="flex-1 px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-medium cursor-pointer"
+                >
+                  해체
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -409,6 +443,10 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [selectedAgent?.messages.length]);
 
+  // Ref to always have the latest agents (survives across async gaps)
+  const latestAgentsRef = useRef(agents);
+  useEffect(() => { latestAgentsRef.current = agents; }, [agents]);
+
   const sendMessage = async () => {
     if (!input.trim() || !selectedAgent) return;
     const agentId = selectedAgent.id;
@@ -421,23 +459,22 @@ export default function Home() {
       timestamp: new Date(),
     };
 
-    // Capture agent info before async
+    // Capture agent info and history SYNCHRONOUSLY from the current render
     const agentName = selectedAgent.name;
     const agentRole = selectedAgent.role;
     const agentPersona = selectedAgent.persona;
     const agentAllowedTools = selectedAgent.allowedTools;
+    const history = selectedAgent.messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
 
-    // Get latest messages via functional update
-    let currentHistory: { role: string; content: string }[] = [];
-    setAgents((prev) => {
-      const agent = prev.find((a) => a.id === agentId);
-      if (agent) {
-        currentHistory = agent.messages.map((m) => ({ role: m.role, content: m.content }));
-      }
-      return prev.map((a) =>
+    // Update UI to show user message
+    setAgents((prev) =>
+      prev.map((a) =>
         a.id === agentId ? { ...a, messages: [...a.messages, userMsg] } : a
-      );
-    });
+      )
+    );
     setSelectedAgent((prev) =>
       prev && prev.id === agentId ? { ...prev, messages: [...prev.messages, userMsg] } : prev
     );
@@ -457,19 +494,24 @@ export default function Home() {
           agentPersona,
           ...(apiKey && { apiKey }),
           allowedTools: agentAllowedTools,
-          history: currentHistory,
+          history,
         }),
       });
       const data = await res.json();
 
+      if (data.error && !data.content) {
+        throw new Error(data.error);
+      }
+
       const agentMsg: Message = {
         id: genId(),
         role: "assistant",
-        content: data.content || data.error || "응답을 받지 못했습니다.",
+        content: data.content || "응답을 받지 못했습니다.",
         toolCalls: data.toolCalls?.length > 0 ? data.toolCalls : undefined,
         timestamp: new Date(),
       };
 
+      // Use functional update to append to the LATEST state (not stale closure)
       setAgents((prev) =>
         prev.map((a) =>
           a.id === agentId ? { ...a, messages: [...a.messages, agentMsg] } : a
@@ -478,11 +520,12 @@ export default function Home() {
       setSelectedAgent((prev) =>
         prev && prev.id === agentId ? { ...prev, messages: [...prev.messages, agentMsg] } : prev
       );
-    } catch {
+    } catch (err) {
+      console.error("sendMessage error:", err);
       const errMsg: Message = {
         id: genId(),
         role: "assistant",
-        content: "연결 실패. 다시 시도해주세요.",
+        content: `연결 실패: ${err instanceof Error ? err.message : "다시 시도해주세요."}`,
         timestamp: new Date(),
       };
       setAgents((prev) =>
@@ -603,11 +646,9 @@ export default function Home() {
       : agents.filter((a) => `@${a.name}` === currentMentionTarget);
 
     // Track conversation locally so each agent sees previous agents' responses
+    // Use selectedTeam.messages directly (from current render, always up-to-date)
     const localHistory: { role: string; content: string }[] = [];
-
-    // Add all existing messages to local history
-    const existingMessages = selectedTeam.messages;
-    for (const m of existingMessages) {
+    for (const m of selectedTeam.messages) {
       localHistory.push({
         role: m.role,
         content: m.role === "user"
@@ -615,11 +656,6 @@ export default function Home() {
           : `[${m.senderName}] ${m.content}`,
       });
     }
-    // Add the new user message
-    localHistory.push({
-      role: "user",
-      content: `[나 → ${currentMentionTarget}] ${sentInput}`,
-    });
 
     try {
       for (const agent of targetAgents) {
@@ -690,6 +726,13 @@ export default function Home() {
     const updated = { ...selectedTeam, goal, rules: rules.filter((r) => r.trim()), agentIds };
     setTeams((prev) => prev.map((t) => (t.id === selectedTeam.id ? updated : t)));
     setSelectedTeam(updated);
+    setShowTeamSettings(false);
+  };
+
+  const dissolveTeam = () => {
+    if (!selectedTeam) return;
+    setTeams((prev) => prev.filter((t) => t.id !== selectedTeam.id));
+    setSelectedTeam(null);
     setShowTeamSettings(false);
   };
 
@@ -1200,7 +1243,7 @@ export default function Home() {
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendTeamMessage()}
+                    onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && sendTeamMessage()}
                     placeholder={`${selectedTeam.name}에 메시지...`}
                     className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   />
@@ -1306,7 +1349,7 @@ export default function Home() {
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+                      onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && sendMessage()}
                       placeholder={`${selectedAgent.name}에게 메시지...`}
                       className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     />
@@ -1564,6 +1607,7 @@ export default function Home() {
           agents={agents}
           onSave={saveTeamSettings}
           onClose={() => setShowTeamSettings(false)}
+          onDissolve={dissolveTeam}
         />
       )}
 

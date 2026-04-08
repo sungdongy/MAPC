@@ -283,33 +283,49 @@ async function callWithTools(
 async function callWithCli(
   history: ChatMessage[],
   systemPrompt: string,
-  allowedTools: string[] = []
 ): Promise<{ content: string; toolCalls: ToolCall[] }> {
-  const conversation = history
-    .map((m) => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`))
-    .join("\n\n");
-  const fullPrompt = `${systemPrompt}\n\n${conversation}\n\nAssistant:`;
+  // Build a single prompt with conversation context
+  // claude -p expects a single prompt, not a multi-turn conversation
+  const recentHistory = history.slice(-10);
 
-  const args = ["-p", "--output-format", "text"];
-  if (allowedTools.length > 0) {
-    args.push("--allowedTools", allowedTools.join(","));
+  let fullPrompt = systemPrompt + "\n\n";
+
+  if (recentHistory.length > 1) {
+    // Summarize previous conversation as context
+    const prevMessages = recentHistory.slice(0, -1);
+    fullPrompt += "Here is the conversation so far for context:\n---\n";
+    for (const m of prevMessages) {
+      fullPrompt += (m.role === "user" ? "User" : "You") + ": " + m.content + "\n";
+    }
+    fullPrompt += "---\n\n";
   }
 
+  // The actual current message (always the last one in history)
+  const currentMessage = recentHistory[recentHistory.length - 1];
+  fullPrompt += "Now respond to this message:\n" + currentMessage.content;
+
+  console.error(`[CLI] Prompt length: ${fullPrompt.length} chars, History: ${recentHistory.length} msgs`);
+
+  // Write prompt to temp file and pipe it to avoid stdin encoding issues
+  const tmpFile = `/tmp/mapc_prompt_${Date.now()}.txt`;
+  await fsWriteFile(tmpFile, fullPrompt, "utf-8");
+
   return new Promise((resolve, reject) => {
-    const proc = execFile(
-      "claude",
-      args,
-      { timeout: 60000, maxBuffer: 1024 * 1024 },
-      (error, stdout) => {
+    exec(
+      `cat "${tmpFile}" | claude -p --output-format text`,
+      { timeout: 60000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env } },
+      (error, stdout, stderr) => {
+        // Clean up temp file
+        import("fs/promises").then(fs => fs.unlink(tmpFile).catch(() => {}));
+
         if (error) {
+          console.error(`[CLI] Error code: ${(error as NodeJS.ErrnoException).code}, killed: ${(error as { killed?: boolean }).killed}, stderr: ${stderr?.slice(0, 500)}`);
           reject(error);
           return;
         }
         resolve({ content: stdout.trim(), toolCalls: [] });
       }
     );
-    proc.stdin?.write(fullPrompt);
-    proc.stdin?.end();
   });
 }
 
@@ -329,10 +345,21 @@ export async function POST(req: NextRequest) {
 
   const systemPrompt = buildSystemPrompt(agentName, agentRole, agentPersona, teamContext);
 
-  const fullHistory: ChatMessage[] = [
+  const rawHistory: ChatMessage[] = [
     ...history.map((m: ChatMessage) => ({ role: m.role, content: m.content })),
     { role: "user" as const, content: message },
   ];
+
+  // Merge consecutive same-role messages to avoid API errors
+  const fullHistory: ChatMessage[] = [];
+  for (const msg of rawHistory) {
+    const last = fullHistory[fullHistory.length - 1];
+    if (last && last.role === msg.role) {
+      last.content += "\n\n" + msg.content;
+    } else {
+      fullHistory.push({ ...msg });
+    }
+  }
 
   // Filter tools based on agent's allowed tools
   const agentTools = allowedTools.length > 0
@@ -342,16 +369,17 @@ export async function POST(req: NextRequest) {
   try {
     const result = apiKey
       ? await callWithTools(apiKey, fullHistory as { role: string; content: unknown }[], systemPrompt, agentTools)
-      : await callWithCli(fullHistory, systemPrompt, allowedTools);
+      : await callWithCli(fullHistory, systemPrompt);
 
     return NextResponse.json({
       content: result.content,
       toolCalls: result.toolCalls,
     });
   } catch (error) {
-    console.error("Agent error:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error("Agent error:", errMsg);
     return NextResponse.json(
-      { error: "에이전트 응답에 실패했습니다." },
+      { error: `에이전트 응답에 실패했습니다: ${errMsg.slice(0, 200)}` },
       { status: 500 }
     );
   }

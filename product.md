@@ -315,6 +315,53 @@
 
 ---
 
+### Phase 11: CLI 연속 메시지 버그 수정 및 UX 개선 (2026-04-08)
+
+**목표:** `claude -p` CLI 모드에서 두 번째 이후 메시지가 실패하는 근본 원인 해결
+
+**버그 분석 과정:**
+
+1. **증상**: 같은 에이전트에게 첫 메시지는 성공, 두 번째 메시지부터 "에이전트 응답에 실패했습니다" 에러
+2. **서버 로그 확인**: `code: 143, killed: true` — 프로세스가 타임아웃으로 강제 종료됨
+3. **프롬프트 크기 배제**: 1078자에서 실패, 1218자에서 성공 → 크기 문제 아님
+4. **동시 호출 배제**: 터미널에서 3개 동시 실행 성공
+5. **프롬프트 형식 배제**: 터미널에서 동일 형식 프롬프트 성공
+
+**근본 원인:** Node.js `execFile` + `stdin.write` 방식의 버퍼링/파이핑 문제
+- `execFile`로 `claude` 프로세스를 생성하고 `proc.stdin.write(prompt)`로 프롬프트 전달
+- 첫 호출은 성공하지만, 이후 호출에서 stdin 파이핑이 불안정하게 동작
+- 프로세스가 입력을 제대로 받지 못해 60초 타임아웃까지 대기 후 kill됨
+
+**해결:** 임시 파일 + `cat | claude -p` 파이프 방식으로 변경
+```
+// Before (불안정)
+const proc = execFile("claude", ["-p"], ...);
+proc.stdin.write(prompt);
+proc.stdin.end();
+
+// After (안정)
+await writeFile(tmpFile, prompt);
+exec(`cat "${tmpFile}" | claude -p --output-format text`, ...);
+```
+
+**추가 수정 사항:**
+1. **React setState updater 비동기 문제 수정**: `setAgents` updater에서 히스토리를 읽는 것은 React 18에서 즉시 실행되지 않음 → `selectedAgent.messages`에서 직접 읽도록 변경
+2. **Team 해체(Dissolve) 기능**: Team Settings 모달 하단에 빨간 Dissolve 버튼 추가, 경고 후 팀 삭제 (에이전트는 유지)
+3. **한글 IME 버그 수정**: 한글 조합 중 Enter 입력 시 마지막 글자가 다음 입력란에 남는 문제 → `isComposing` 체크 추가
+4. **에러 메시지 상세화**: API 에러 응답에 실제 에러 내용 포함
+5. **히스토리 제한**: CLI 모드에서 최근 10개 메시지만 전달 (프롬프트 크기 관리)
+
+**테스트 결과 (API 직접 호출):**
+
+| 테스트 | 결과 |
+|--------|------|
+| 1번째 메시지 (히스토리 없음) | 성공 |
+| 2번째 메시지 (히스토리 2개) | 성공 |
+| 3번째 메시지 (히스토리 4개) | 성공 |
+| Team chat (팀 컨텍스트 + 히스토리) | 성공 |
+
+---
+
 ## Current Architecture
 
 ```

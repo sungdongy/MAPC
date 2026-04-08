@@ -271,6 +271,50 @@
 
 ---
 
+### Phase 10: 안정성 개선 및 데이터 영속화 (2026-04-08)
+
+**목표:** 연속 메시지 실패 해결, 동시 대화 지원, 데이터 영속화
+
+**구현 내용:**
+
+1. **연속 메시지 실패 해결**
+   - 문제: `selectedAgent.messages`를 클로저로 캡처하여, 빠르게 메시지를 보내면 이전 응답이 반영되기 전의 오래된 history를 참조
+   - 해결: state 업데이트를 함수형(`prev => ...`)으로 변경하여 항상 최신 상태 기반으로 처리
+   - history도 전송 시점에 최신 상태에서 가져옴
+
+2. **동시 대화 지원 (에이전트별 독립 로딩)**
+   - 문제: 글로벌 `isLoading` boolean이 전체 UI를 차단하여, Agent A 응답 대기 중 Agent B에게 메시지 불가
+   - 해결: `isLoading: boolean` → `loadingIds: Set<string>` (에이전트/팀 ID별 로딩 관리)
+   - Agent A가 응답 중이어도 Agent B에게 메시지 전송 가능
+   - 로딩 표시는 해당 에이전트/팀 채팅에서만 표시
+   - 입력란이 더 이상 전역 비활성화되지 않음
+
+3. **Team Chat 대화 맥락 공유 수정**
+   - 문제: React 비동기 배치 업데이트로 인해 팀 채팅에서 이전 에이전트의 응답이 다음 에이전트에게 전달되지 않음
+   - 해결: 로컬 변수(`localHistory`)로 대화 기록을 직접 관리
+   - Agent A 응답 → localHistory에 추가 → Agent B가 A의 응답을 포함한 히스토리를 받음
+
+4. **기본 에이전트 3명 구성**
+   - Andy (Product Manager): 비즈니스 임팩트 중심, 구조적 커뮤니케이션
+   - Brown (DevOps Engineer): 안정성/자동화 중시, 코드로 보여주는 스타일
+   - Clark (Data Scientist): 데이터 기반 객관적 분석, 쉬운 설명, 탐구적 성격
+   - 3명 모두 전체 도구 권한 부여
+
+5. **localStorage 데이터 영속화**
+   - 에이전트 (이름, 역할, 페르소나, 도구 권한, 대화 기록) → `mapc_agents`
+   - 팀 (이름, 목표, 규칙, 멤버, 대화 기록) → `mapc_teams`
+   - API Key → `mapc_apikey`
+   - 자동 저장: `useEffect`로 state 변경 시 자동으로 localStorage에 기록
+   - 자동 복원: 초기 state를 `localStorage`에서 로드 (없으면 기본값)
+   - Date 객체 복원 처리 (JSON.parse 시 문자열 → Date 변환)
+
+**한계:**
+- 같은 PC, 같은 브라우저에서만 데이터 유지
+- 브라우저 캐시 삭제 시 소실
+- 향후 DB(서버 저장)로 전환 필요
+
+---
+
 ## Current Architecture
 
 ```

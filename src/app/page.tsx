@@ -327,26 +327,61 @@ function TeamSettingsModal({ team, agents, onSave, onClose }: {
   );
 }
 
+// ─── localStorage helpers ───────────────────────────────────────
+
+const DEFAULT_AGENTS: Agent[] = [
+  { id: "1", name: "Andy", role: "Product Manager", persona: "비즈니스 임팩트와 사용자 가치를 최우선으로 생각합니다. 항상 Why부터 시작하고, 명확한 우선순위와 로드맵을 제시합니다. 간결하고 구조적인 커뮤니케이션을 선호합니다.", color: "bg-blue-500", allowedTools: ["list_files", "read_file", "write_file", "run_command", "web_search"], messages: [] },
+  { id: "2", name: "Brown", role: "DevOps Engineer", persona: "안정성과 자동화를 중시하는 실용적인 엔지니어입니다. 인프라, CI/CD, 모니터링에 능숙하며 문제 해결 시 항상 근본 원인을 파고듭니다. 코드와 명령어로 직접 보여주는 것을 선호합니다.", color: "bg-green-500", allowedTools: ["list_files", "read_file", "write_file", "run_command", "web_search"], messages: [] },
+  { id: "3", name: "Clark", role: "Data Scientist", persona: "데이터 기반의 객관적 분석을 제공합니다. 복잡한 통계나 모델을 비전문가도 이해할 수 있도록 쉽게 설명하며, 시각화와 수치 근거를 항상 함께 제시합니다. 호기심이 많고 탐구적인 성격입니다.", color: "bg-purple-500", allowedTools: ["list_files", "read_file", "write_file", "run_command", "web_search"], messages: [] },
+];
+
+function loadFromStorage<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    // Restore Date objects in messages
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) {
+        if (item.messages) {
+          for (const m of item.messages) {
+            if (m.timestamp) m.timestamp = new Date(m.timestamp);
+          }
+        }
+      }
+    }
+    return parsed;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveToStorage<T>(key: string, value: T) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch { /* storage full - ignore */ }
+}
+
 export default function Home() {
-  const [agents, setAgents] = useState<Agent[]>([
-    { id: "1", name: "Andy", role: "General Assistant", persona: "", color: "bg-blue-500", allowedTools: [], messages: [] },
-  ]);
+  const [agents, setAgents] = useState<Agent[]>(() => loadFromStorage("mapc_agents", DEFAULT_AGENTS));
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [newAgentName, setNewAgentName] = useState("");
   const [newAgentRole, setNewAgentRole] = useState("");
   const [newAgentPersona, setNewAgentPersona] = useState("");
   const [newAgentTools, setNewAgentTools] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [apiKey, setApiKey] = useState("");
+  const [apiKey, setApiKey] = useState(() => loadFromStorage("mapc_apikey", ""));
   const [showSettings, setShowSettings] = useState(false);
   const [tempApiKey, setTempApiKey] = useState("");
   const [viewMode, setViewMode] = useState<"chat" | "office">("chat");
   const [showFireConfirm, setShowFireConfirm] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"agents" | "teams">("agents");
-  const [teams, setTeams] = useState<Team[]>([]);
+  const [teams, setTeams] = useState<Team[]>(() => loadFromStorage("mapc_teams", []));
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [showTeamSettings, setShowTeamSettings] = useState(false);
@@ -355,6 +390,11 @@ export default function Home() {
   const [newTeamGoal, setNewTeamGoal] = useState("");
   const [newTeamRules, setNewTeamRules] = useState<string[]>([""]);
   const [newTeamAgentIds, setNewTeamAgentIds] = useState<string[]>([]);
+
+  // ─── Auto-save to localStorage ────────────────────────────────
+  useEffect(() => { saveToStorage("mapc_agents", agents); }, [agents]);
+  useEffect(() => { saveToStorage("mapc_teams", teams); }, [teams]);
+  useEffect(() => { saveToStorage("mapc_apikey", apiKey); }, [apiKey]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // ─── Office refs ──────────────────────────────────────────────
@@ -370,7 +410,9 @@ export default function Home() {
   }, [selectedAgent?.messages.length]);
 
   const sendMessage = async () => {
-    if (!input.trim() || !selectedAgent || isLoading) return;
+    if (!input.trim() || !selectedAgent) return;
+    const agentId = selectedAgent.id;
+    if (loadingIds.has(agentId)) return;
 
     const userMsg: Message = {
       id: genId(),
@@ -379,15 +421,30 @@ export default function Home() {
       timestamp: new Date(),
     };
 
-    const updatedMessages = [...selectedAgent.messages, userMsg];
-    setAgents((prev) =>
-      prev.map((a) => (a.id === selectedAgent.id ? { ...a, messages: updatedMessages } : a))
+    // Capture agent info before async
+    const agentName = selectedAgent.name;
+    const agentRole = selectedAgent.role;
+    const agentPersona = selectedAgent.persona;
+    const agentAllowedTools = selectedAgent.allowedTools;
+
+    // Get latest messages via functional update
+    let currentHistory: { role: string; content: string }[] = [];
+    setAgents((prev) => {
+      const agent = prev.find((a) => a.id === agentId);
+      if (agent) {
+        currentHistory = agent.messages.map((m) => ({ role: m.role, content: m.content }));
+      }
+      return prev.map((a) =>
+        a.id === agentId ? { ...a, messages: [...a.messages, userMsg] } : a
+      );
+    });
+    setSelectedAgent((prev) =>
+      prev && prev.id === agentId ? { ...prev, messages: [...prev.messages, userMsg] } : prev
     );
-    setSelectedAgent((prev) => (prev ? { ...prev, messages: updatedMessages } : null));
 
     const sentInput = input;
     setInput("");
-    setIsLoading(true);
+    setLoadingIds((prev) => new Set(prev).add(agentId));
 
     try {
       const res = await fetch("/api/chat", {
@@ -395,15 +452,12 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: sentInput,
-          agentName: selectedAgent.name,
-          agentRole: selectedAgent.role,
-          agentPersona: selectedAgent.persona,
+          agentName,
+          agentRole,
+          agentPersona,
           ...(apiKey && { apiKey }),
-          allowedTools: selectedAgent.allowedTools,
-          history: selectedAgent.messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          allowedTools: agentAllowedTools,
+          history: currentHistory,
         }),
       });
       const data = await res.json();
@@ -416,11 +470,14 @@ export default function Home() {
         timestamp: new Date(),
       };
 
-      const finalMessages = [...updatedMessages, agentMsg];
       setAgents((prev) =>
-        prev.map((a) => (a.id === selectedAgent.id ? { ...a, messages: finalMessages } : a))
+        prev.map((a) =>
+          a.id === agentId ? { ...a, messages: [...a.messages, agentMsg] } : a
+        )
       );
-      setSelectedAgent((prev) => (prev ? { ...prev, messages: finalMessages } : null));
+      setSelectedAgent((prev) =>
+        prev && prev.id === agentId ? { ...prev, messages: [...prev.messages, agentMsg] } : prev
+      );
     } catch {
       const errMsg: Message = {
         id: genId(),
@@ -428,13 +485,20 @@ export default function Home() {
         content: "연결 실패. 다시 시도해주세요.",
         timestamp: new Date(),
       };
-      const finalMessages = [...updatedMessages, errMsg];
       setAgents((prev) =>
-        prev.map((a) => (a.id === selectedAgent.id ? { ...a, messages: finalMessages } : a))
+        prev.map((a) =>
+          a.id === agentId ? { ...a, messages: [...a.messages, errMsg] } : a
+        )
       );
-      setSelectedAgent((prev) => (prev ? { ...prev, messages: finalMessages } : null));
+      setSelectedAgent((prev) =>
+        prev && prev.id === agentId ? { ...prev, messages: [...prev.messages, errMsg] } : prev
+      );
     } finally {
-      setIsLoading(false);
+      setLoadingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(agentId);
+        return next;
+      });
     }
   };
 
@@ -500,7 +564,9 @@ export default function Home() {
   const getTeamAgents = (team: Team) => agents.filter((a) => team.agentIds.includes(a.id));
 
   const sendTeamMessage = async () => {
-    if (!input.trim() || !selectedTeam || isLoading) return;
+    if (!input.trim() || !selectedTeam) return;
+    const teamId = selectedTeam.id;
+    if (loadingIds.has(teamId)) return;
 
     const userMsg: TeamMessage = {
       id: genId(),
@@ -511,35 +577,49 @@ export default function Home() {
       timestamp: new Date(),
     };
 
-    const updatedMessages = [...selectedTeam.messages, userMsg];
-    const updatedTeam = { ...selectedTeam, messages: updatedMessages };
-    setTeams((prev) => prev.map((t) => (t.id === selectedTeam.id ? updatedTeam : t)));
-    setSelectedTeam(updatedTeam);
+    // Capture team info
+    const teamName = selectedTeam.name;
+    const teamGoal = selectedTeam.goal;
+    const teamRules = selectedTeam.rules;
+    const currentMentionTarget = mentionTarget;
+
+    // Get latest messages and add user msg
+    setTeams((prev) =>
+      prev.map((t) => (t.id === teamId ? { ...t, messages: [...t.messages, userMsg] } : t))
+    );
+    setSelectedTeam((prev) =>
+      prev && prev.id === teamId ? { ...prev, messages: [...prev.messages, userMsg] } : prev
+    );
 
     const sentInput = input;
     setInput("");
-    setIsLoading(true);
+    setLoadingIds((prev) => new Set(prev).add(teamId));
 
-    const teamContext = {
-      name: selectedTeam.name,
-      goal: selectedTeam.goal,
-      rules: selectedTeam.rules,
-    };
-
-    // Build history from team messages for context
-    const history = updatedMessages.map((m) => ({
-      role: m.role,
-      content: m.role === "user"
-        ? `[${m.senderName} → ${m.mentionTarget}] ${m.content}`
-        : `[${m.senderName}] ${m.content}`,
-    }));
+    const teamContext = { name: teamName, goal: teamGoal, rules: teamRules };
 
     // Determine which agents should respond
-    const targetAgents = mentionTarget === "@전체"
+    const targetAgents = currentMentionTarget === "@전체"
       ? getTeamAgents(selectedTeam)
-      : agents.filter((a) => `@${a.name}` === mentionTarget);
+      : agents.filter((a) => `@${a.name}` === currentMentionTarget);
 
-    let currentMessages = updatedMessages;
+    // Track conversation locally so each agent sees previous agents' responses
+    const localHistory: { role: string; content: string }[] = [];
+
+    // Add all existing messages to local history
+    const existingMessages = selectedTeam.messages;
+    for (const m of existingMessages) {
+      localHistory.push({
+        role: m.role,
+        content: m.role === "user"
+          ? `[${m.senderName} → ${m.mentionTarget}] ${m.content}`
+          : `[${m.senderName}] ${m.content}`,
+      });
+    }
+    // Add the new user message
+    localHistory.push({
+      role: "user",
+      content: `[나 → ${currentMentionTarget}] ${sentInput}`,
+    });
 
     try {
       for (const agent of targetAgents) {
@@ -552,7 +632,7 @@ export default function Home() {
             agentRole: agent.role,
             agentPersona: agent.persona,
             ...(apiKey && { apiKey }),
-            history,
+            history: localHistory,
             teamContext,
           }),
         });
@@ -567,13 +647,19 @@ export default function Home() {
           timestamp: new Date(),
         };
 
-        currentMessages = [...currentMessages, agentMsg];
-        const teamWithResponse = { ...selectedTeam, messages: currentMessages };
-        setTeams((prev) => prev.map((t) => (t.id === selectedTeam.id ? teamWithResponse : t)));
-        setSelectedTeam(teamWithResponse);
+        // Add to local history so the NEXT agent can see this response
+        localHistory.push({
+          role: "assistant",
+          content: `[${agent.name}] ${agentMsg.content}`,
+        });
 
-        // Add agent response to history for next agent's context
-        history.push({ role: "assistant" as const, content: `[${agent.name}] ${agentMsg.content}` });
+        // Update React state
+        setTeams((prev) =>
+          prev.map((t) => (t.id === teamId ? { ...t, messages: [...t.messages, agentMsg] } : t))
+        );
+        setSelectedTeam((prev) =>
+          prev && prev.id === teamId ? { ...prev, messages: [...prev.messages, agentMsg] } : prev
+        );
       }
     } catch {
       const errMsg: TeamMessage = {
@@ -584,12 +670,18 @@ export default function Home() {
         mentionTarget: "",
         timestamp: new Date(),
       };
-      currentMessages = [...currentMessages, errMsg];
-      const teamWithErr = { ...selectedTeam, messages: currentMessages };
-      setTeams((prev) => prev.map((t) => (t.id === selectedTeam.id ? teamWithErr : t)));
-      setSelectedTeam(teamWithErr);
+      setTeams((prev) =>
+        prev.map((t) => (t.id === teamId ? { ...t, messages: [...t.messages, errMsg] } : t))
+      );
+      setSelectedTeam((prev) =>
+        prev && prev.id === teamId ? { ...prev, messages: [...prev.messages, errMsg] } : prev
+      );
     } finally {
-      setIsLoading(false);
+      setLoadingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(teamId);
+        return next;
+      });
     }
   };
 
@@ -1077,7 +1169,7 @@ export default function Home() {
                     </div>
                   );
                 })}
-                {isLoading && (
+                {selectedTeam && loadingIds.has(selectedTeam.id) && (
                   <div className="flex justify-start">
                     <div className="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3">
                       <div className="flex items-center gap-1">
@@ -1109,16 +1201,14 @@ export default function Home() {
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendTeamMessage()}
-                    disabled={isLoading}
-                    placeholder={isLoading ? "응답 중..." : `${selectedTeam.name}에 메시지...`}
-                    className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-50"
+                    placeholder={`${selectedTeam.name}에 메시지...`}
+                    className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                   />
                   <button
                     onClick={sendTeamMessage}
-                    disabled={isLoading}
-                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-xl text-sm font-medium transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors cursor-pointer"
                   >
-                    {isLoading ? "..." : "전송"}
+                    전송
                   </button>
                 </div>
               </div>
@@ -1194,7 +1284,7 @@ export default function Home() {
                     </div>
                   </div>
                 ))}
-                {isLoading && (
+                {selectedAgent && loadingIds.has(selectedAgent.id) && (
                   <div className="flex justify-start">
                     <div className="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3">
                       <div className="flex items-center gap-1">
@@ -1217,16 +1307,14 @@ export default function Home() {
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                      disabled={isLoading}
-                      placeholder={isLoading ? "응답 중..." : `${selectedAgent.name}에게 메시지...`}
-                      className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-50"
+                      placeholder={`${selectedAgent.name}에게 메시지...`}
+                      className="flex-1 px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     />
                     <button
                       onClick={sendMessage}
-                      disabled={isLoading}
-                      className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-xl text-sm font-medium transition-colors cursor-pointer disabled:cursor-not-allowed"
+                      className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors cursor-pointer"
                     >
-                      {isLoading ? "..." : "전송"}
+                      전송
                     </button>
                   </div>
                 </div>
